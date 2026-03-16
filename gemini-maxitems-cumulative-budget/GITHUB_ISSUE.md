@@ -8,27 +8,31 @@
 
 ---
 
-### Environment
+This is a **product issue** — the API server rejects valid JSON Schemas with an opaque error. The SDK passes the schema through correctly; the rejection comes from the Gemini API itself. Filing here since the SDK is the interface and there's no public product issue tracker.
 
-- API: Gemini API via `google-genai` Python SDK
+#### Environment details
+
+- Programming language: Python 3.11+
+- OS: Any (reproduced on Colab, macOS, Linux)
+- Language runtime version: Python 3.11
+- Package version: `google-genai` latest (tested with 1.x)
 - Model: `gemini-3-flash-preview`
-- SDK version: latest (`pip install google-genai`)
 
-### Description
+#### Steps to reproduce
 
-When using function calling with `parametersJsonSchema`, the API returns `INVALID_ARGUMENT` with no diagnostic information when the **cumulative sum of `maxItems` values** across all properties in a tool schema exceeds an undocumented budget of approximately 960. This affects **both ANY and AUTO modes**.
+1. Open the self-contained Colab notebook: [Open in Colab](https://colab.research.google.com/github/radishbuild/field-notes/blob/main/gemini-maxitems-cumulative-budget/repro_minimal.ipynb) · [Source on GitHub](https://github.com/radishbuild/field-notes/blob/main/gemini-maxitems-cumulative-budget/repro_minimal.ipynb)
+2. Set your `GEMINI_API_KEY` in Colab Secrets
+3. Run all cells
+
+The notebook generates a single tool with N array properties, each with a configurable `maxItems` value. It sweeps across different field counts and values to isolate the cumulative budget.
+
+#### What happens
+
+When using function calling with `parametersJsonSchema`, the API returns `INVALID_ARGUMENT` with no diagnostic information when the **cumulative sum of `maxItems` values** across all properties in a tool schema exceeds ~960. This affects **both ANY and AUTO modes**.
 
 Other JSON Schema numeric constraints (`maximum`, `minimum`, `maxLength`) at identical values are completely unaffected.
 
-### Reproduction
-
-Self-contained Colab notebook — open, set API key, run all cells:
-
-[Open in Colab](https://colab.research.google.com/github/radishbuild/field-notes/blob/main/gemini-maxitems-cumulative-budget/repro_minimal.ipynb) · [Source on GitHub](https://github.com/radishbuild/field-notes/blob/main/gemini-maxitems-cumulative-budget/repro_minimal.ipynb)
-
-The notebook generates a single tool with N array properties, each with a configurable `maxItems` value. It sweeps across different field counts and `maxItems` values to isolate the cumulative budget.
-
-### Results
+#### Results
 
 **Single field — boundary sweep:**
 
@@ -83,25 +87,25 @@ Same failing schemas with maxItems removed → all PASS ✓
    maxLength  │  PASS ✓  PASS ✓
 ```
 
-### Key observations
+#### Key observations
 
-1. **Both ANY and AUTO modes.** Unlike the enum complexity issue (which only affects ANY mode), this budget applies to both calling modes.
+1. **Both ANY and AUTO modes.** Unlike the enum complexity issue, this budget applies to both calling modes.
 
 2. **Cumulative sum is the budget.** The threshold is ~960 regardless of how the `maxItems` values are distributed across properties. 1 field with `maxItems=972` fails, as do 8 fields with `maxItems=120` each (sum=960).
 
-3. **Only `maxItems` is affected.** `maximum`, `minimum`, and `maxLength` at identical or even larger cumulative values all pass. The budget is specific to `maxItems`.
+3. **Only `maxItems` is affected.** `maximum`, `minimum`, and `maxLength` at identical or even larger cumulative values all pass.
 
 4. **Error is completely opaque.** The response is `INVALID_ARGUMENT` with no indication of which property, what the limit is, or that `maxItems` is the cause.
 
 5. **Production impact.** Tool schemas generated from OpenAPI specs commonly have many array fields with `maxItems` constraints. A typical CRM search tool with 20 array fields each having `maxItems: 100` (sum=2000) will silently fail.
 
-### Expected behavior
+#### Expected behavior
 
 1. The API should either accept these schemas or return a descriptive error indicating what exceeds the limit, which property is responsible, and what the limit is.
 
 2. If a cumulative budget on `maxItems` is intentional, it should be documented so developers can design schemas accordingly.
 
-### Workaround
+#### Workaround
 
 - Strip `maxItems` and `minItems` from tool schemas before sending to Gemini, and validate array length constraints in the application layer instead
 - If `maxItems` must be included, ensure the cumulative sum across all properties stays well under ~960
